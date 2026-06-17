@@ -20,3 +20,6 @@ publish/
 
 ## Backups
 bak/
+
+## Claude
+.claude/

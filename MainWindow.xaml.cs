@@ -405,11 +405,15 @@ public partial class MainWindow : Window
             var sshd = new ServiceController("sshd");
             if (sshd.Status != ServiceControllerStatus.Running)
             {
-                AppendLog("启动 sshd 服务并设为自动...\n", "Yellow");
+                AppendLog("设置 sshd 为自动启动...\n", "Yellow");
+                RunPowershellCommand("sc config sshd start=auto", "sshd 已设为自动启动");
+                AppendLog("启动 sshd 服务...\n", "Yellow");
                 sshd.Start();
                 sshd.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
             }
             AppendLog("sshd 服务运行正常\n", "Green");
+            AppendLog("确保 sshd 启动类型为自动...\n", "Yellow");
+            RunPowershellCommand("sc config sshd start=auto", "sshd 启动类型已确认");
 
             // 2b. 检查 sshd_config 中 Administrators 组的重定向设置
             AppendLog("\n=== 检查 sshd_config 配置 ===\n", "Cyan");
