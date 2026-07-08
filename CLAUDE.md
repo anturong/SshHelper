@@ -40,6 +40,8 @@ Plain WPF code-behind, no MVVM, no DI.
 
 **External processes**: `Process.Start()` used for `ssh-keygen`, `ssh`, and `powershell`. PowerShell scripts use `-NoProfile` for clean execution.
 
+**sshd auto-start**: The app runs `sc config sshd start=auto` via PowerShell to ensure sshd starts on boot. This is done both before starting the service and as a safety check when the service is already running.
+
 ## Right Panel Buttons
 
 | Button | Color | Action |

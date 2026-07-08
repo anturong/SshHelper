@@ -132,7 +132,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            AppendLog("=== 1/5 备份现有密钥 ===\n", "Cyan");
+            AppendLog("=== 0/5 确保 OpenSSH Client 可用 ===\n", "Cyan");
+            EnsureOpenSshClient();
+
+            AppendLog("\n=== 1/5 备份现有密钥 ===\n", "Cyan");
             BackupKeys();
 
             AppendLog("\n=== 2/5 生成新密钥 ===\n", "Cyan");
@@ -174,28 +177,146 @@ public partial class MainWindow : Window
 
     private void GenerateNewKeys()
     {
-        // 清理旧密钥
-        if (File.Exists(PrivateKeyPath)) File.Delete(PrivateKeyPath);
-        if (File.Exists(PubKeyPath)) File.Delete(PubKeyPath);
+        // 确保 ~/.ssh 目录存在，否则 ssh-keygen 会失败
+        var sshDir = Path.GetDirectoryName(PrivateKeyPath);
+        if (sshDir is not null && !Directory.Exists(sshDir))
+        {
+            Directory.CreateDirectory(sshDir);
+            AppendLog($"已创建目录: {sshDir}\n", "Green");
+        }
 
+        // 清理旧密钥（仅在旧密钥存在时才删除）
+        if (File.Exists(PrivateKeyPath))
+        {
+            AppendLog($"删除旧私钥: {PrivateKeyPath}\n", "Yellow");
+            File.Delete(PrivateKeyPath);
+        }
+        if (File.Exists(PubKeyPath))
+        {
+            AppendLog($"删除旧公钥: {PubKeyPath}\n", "Yellow");
+            File.Delete(PubKeyPath);
+        }
+
+        // 尝试多个可能的 ssh-keygen 路径
+        string sshKeygenPath = FindSshKeygen();
+        AppendLog($"使用 ssh-keygen: {sshKeygenPath}\n", "Cyan");
+
+        // 为新密钥文件预设正确的 ACL（继承 .ssh 目录的权限）
         var psi = new ProcessStartInfo
         {
-            FileName = "ssh-keygen",
+            FileName = sshKeygenPath,
             Arguments = $"-t ed25519 -f \"{PrivateKeyPath}\" -N \"\" -q",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        var process = Process.Start(psi);
-        if (process is null) { AppendLog("无法启动 ssh-keygen\n", "Red"); return; }
-        process.WaitForExit();
+        Process? process;
+        try
+        {
+            process = Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"启动 ssh-keygen 失败（路径: {sshKeygenPath}）: {ex.Message}\n", "Red");
+            AppendLog("→ 请确认 OpenSSH Client 已安装：Get-WindowsCapability -Online | ? Name -like '*OpenSSH.Client*'\n", "Cyan");
+            return;
+        }
+        if (process is null)
+        {
+            AppendLog($"无法启动 ssh-keygen（尝试路径: {sshKeygenPath}），请确保已安装 OpenSSH Client\n", "Red");
+            return;
+        }
+        process.WaitForExit(30000);
         if (process.ExitCode != 0)
         {
-            AppendLog("密钥生成失败: " + process.StandardError.ReadToEnd() + "\n", "Red");
+            var err = process.StandardError.ReadToEnd();
+            var output = process.StandardOutput.ReadToEnd();
+            AppendLog($"密钥生成失败（退出码 {process.ExitCode}）\n", "Red");
+            if (!string.IsNullOrWhiteSpace(err))
+                AppendLog($"  错误输出: {err.Trim()}\n", "Red");
+            if (!string.IsNullOrWhiteSpace(output))
+                AppendLog($"  标准输出: {output.Trim()}\n", "Yellow");
+            return;
+        }
+
+        // 验证文件确实生成了（某些情况下 ssh-keygen 退出码 0 但实际未写入）
+        if (!File.Exists(PrivateKeyPath) || !File.Exists(PubKeyPath))
+        {
+            AppendLog("密钥生成异常：ssh-keygen 正常退出但密钥文件未生成\n", "Red");
+            AppendLog($"  期望私钥: {PrivateKeyPath}\n", "Yellow");
+            AppendLog($"  期望公钥: {PubKeyPath}\n", "Yellow");
+            // 检查输出，可能有提示信息
+            var output = process.StandardOutput.ReadToEnd();
+            if (!string.IsNullOrWhiteSpace(output))
+                AppendLog($"  ssh-keygen 输出: {output.Trim()}\n", "Yellow");
             return;
         }
         AppendLog("新 ED25519 密钥对已生成\n", "Green");
+    }
+
+    /// <summary>
+    /// 查找 ssh-keygen.exe，依次尝试：System32\OpenSSH、ProgramFiles\OpenSSH、ProgramFiles(x86)\OpenSSH、
+    /// Git for Windows\usr\bin、PATH 环境变量中的目录，最后回退到裸 "ssh-keygen" 由 OS 通过 PATH 解析。
+    /// </summary>
+    private static string FindSshKeygen()
+    {
+        string[] candidates =
+        {
+            Path.Combine(Environment.SystemDirectory, @"OpenSSH\ssh-keygen.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"OpenSSH\ssh-keygen.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"OpenSSH\ssh-keygen.exe"),
+            // Git for Windows / MSYS2 可能自带 OpenSSH
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Git\usr\bin\ssh-keygen.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Git\usr\bin\ssh-keygen.exe"),
+        };
+        foreach (var c in candidates)
+        {
+            if (File.Exists(c)) return c;
+        }
+        // 在 PATH 环境变量中搜索
+        var foundOnPath = FindExeOnPath("ssh-keygen.exe");
+        if (foundOnPath is not null) return foundOnPath;
+        // 最终回退：裸名称，依赖系统 PATH（适用于用户自定安装位置）
+        return "ssh-keygen";
+    }
+
+    /// <summary>
+    /// 查找 ssh.exe，与 FindSshKeygen 同样的搜索策略。
+    /// </summary>
+    private static string FindSsh()
+    {
+        string[] candidates =
+        {
+            Path.Combine(Environment.SystemDirectory, @"OpenSSH\ssh.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"OpenSSH\ssh.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"OpenSSH\ssh.exe"),
+            // Git for Windows / MSYS2 可能自带 OpenSSH
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Git\usr\bin\ssh.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Git\usr\bin\ssh.exe"),
+        };
+        foreach (var c in candidates)
+        {
+            if (File.Exists(c)) return c;
+        }
+        var foundOnPath = FindExeOnPath("ssh.exe");
+        if (foundOnPath is not null) return foundOnPath;
+        return "ssh";
+    }
+
+    /// <summary>
+    /// 在 PATH 环境变量的各个目录中搜索指定可执行文件。
+    /// </summary>
+    private static string? FindExeOnPath(string exeName)
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(pathEnv)) return null;
+        foreach (var dir in pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fullPath = Path.Combine(dir.Trim(), exeName);
+            if (File.Exists(fullPath)) return fullPath;
+        }
+        return null;
     }
 
     private void DeployPublicKey()
@@ -211,33 +332,63 @@ public partial class MainWindow : Window
         // 写入 ~/.ssh/authorized_keys
         var sshDir = Path.GetDirectoryName(AuthKeysPath);
         if (sshDir is not null && !Directory.Exists(sshDir)) Directory.CreateDirectory(sshDir);
-        GrantWriteAccess(AuthKeysPath);
-        File.WriteAllText(AuthKeysPath, pubKey + Environment.NewLine);
-        AppendLog("公钥已写入 authorized_keys\n", "Green");
+        TryGrantWriteAccess(AuthKeysPath);
+        try
+        {
+            File.WriteAllText(AuthKeysPath, pubKey + Environment.NewLine);
+            AppendLog("公钥已写入 authorized_keys\n", "Green");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"写入 authorized_keys 失败：{ex.Message}\n", "Red");
+        }
 
         // 写入 C:\ProgramData\ssh\administrators_authorized_keys
         var adminSshDir = Path.GetDirectoryName(AuthKeysAdminPath);
-        if (adminSshDir is not null && !Directory.Exists(adminSshDir)) Directory.CreateDirectory(adminSshDir);
-        GrantWriteAccess(AuthKeysAdminPath);
-        File.WriteAllText(AuthKeysAdminPath, pubKey + Environment.NewLine);
-        AppendLog("公钥已写入 administrators_authorized_keys\n", "Green");
+        if (adminSshDir is not null && !Directory.Exists(adminSshDir))
+        {
+            try { Directory.CreateDirectory(adminSshDir); }
+            catch (Exception ex)
+            {
+                AppendLog($"无法创建 {adminSshDir}（可能需要管理员权限）：{ex.Message}\n", "Yellow");
+                // 不阻断流程 — authorized_keys 可能已足够
+            }
+        }
+        TryGrantWriteAccess(AuthKeysAdminPath);
+        try
+        {
+            File.WriteAllText(AuthKeysAdminPath, pubKey + Environment.NewLine);
+            AppendLog("公钥已写入 administrators_authorized_keys\n", "Green");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"写入 administrators_authorized_keys 失败（可能需要管理员权限）：{ex.Message}\n", "Yellow");
+            AppendLog("→ 如果你的 sshd_config 未配置 administrators_authorized_keys，可忽略此项\n", "Cyan");
+        }
 
         // 设置权限
-        SetAuthorizedKeysPermission();
-        SetAdminAuthorizedKeysPermission();
+        TrySetAuthorizedKeysPermission();
+        TrySetAdminAuthorizedKeysPermission();
     }
 
     // 为当前用户添加写权限，用于覆盖之前设的只读 ACL
-    private void GrantWriteAccess(string path)
+    private void TryGrantWriteAccess(string path)
     {
         if (!File.Exists(path)) return;
-        var fileInfo = new FileInfo(path);
-        var security = fileInfo.GetAccessControl();
-        security.AddAccessRule(new FileSystemAccessRule(
-            WindowsIdentity.GetCurrent().Name,
-            FileSystemRights.Write,
-            AccessControlType.Allow));
-        fileInfo.SetAccessControl(security);
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            var security = fileInfo.GetAccessControl();
+            security.AddAccessRule(new FileSystemAccessRule(
+                WindowsIdentity.GetCurrent().Name,
+                FileSystemRights.Write,
+                AccessControlType.Allow));
+            fileInfo.SetAccessControl(security);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"ACL 写权限设置失败（{path}）：{ex.Message}\n", "Yellow");
+        }
     }
 
     // 复制新私钥到剪贴板（仅在更换密钥流程中调用）
@@ -369,25 +520,32 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private void SetAdminAuthorizedKeysPermission()
+    private void TrySetAdminAuthorizedKeysPermission()
     {
         if (!File.Exists(AuthKeysAdminPath)) return;
-        var fileInfo = new FileInfo(AuthKeysAdminPath);
-        var security = fileInfo.GetAccessControl();
+        try
+        {
+            var fileInfo = new FileInfo(AuthKeysAdminPath);
+            var security = fileInfo.GetAccessControl();
 
-        // 禁用继承，清除所有继承权限
-        security.SetAccessRuleProtection(true, false);
+            // 禁用继承，清除所有继承权限
+            security.SetAccessRuleProtection(true, false);
 
-        // SYSTEM 读取权限
-        security.SetAccessRule(new FileSystemAccessRule("SYSTEM",
-            FileSystemRights.Read, AccessControlType.Allow));
+            // SYSTEM 读取权限（通过 SID 名称，跨语言通用）
+            security.SetAccessRule(new FileSystemAccessRule("SYSTEM",
+                FileSystemRights.Read, AccessControlType.Allow));
 
-        // BUILTIN\Administrators 读取权限
-        security.SetAccessRule(new FileSystemAccessRule("BUILTIN\\Administrators",
-            FileSystemRights.Read, AccessControlType.Allow));
+            // BUILTIN\Administrators 读取权限（NT 权威 SID，跨语言通用）
+            security.SetAccessRule(new FileSystemAccessRule("BUILTIN\\Administrators",
+                FileSystemRights.Read, AccessControlType.Allow));
 
-        fileInfo.SetAccessControl(security);
-        AppendLog("administrators_authorized_keys ACL 权限设置完成\n", "Green");
+            fileInfo.SetAccessControl(security);
+            AppendLog("administrators_authorized_keys ACL 权限设置完成\n", "Green");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"administrators_authorized_keys ACL 设置失败（可能需要管理员权限）：{ex.Message}\n", "Yellow");
+        }
     }
 
     // ==================== 核心配置逻辑 ====================
@@ -402,18 +560,26 @@ public partial class MainWindow : Window
 
             // 2. 检查 sshd 服务
             AppendLog("\n=== 检查 sshd 服务状态 ===\n", "Cyan");
-            var sshd = new ServiceController("sshd");
-            if (sshd.Status != ServiceControllerStatus.Running)
+            try
             {
-                AppendLog("设置 sshd 为自动启动...\n", "Yellow");
-                RunPowershellCommand("sc config sshd start=auto", "sshd 已设为自动启动");
-                AppendLog("启动 sshd 服务...\n", "Yellow");
-                sshd.Start();
-                sshd.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
+                var sshd = new ServiceController("sshd");
+                if (sshd.Status != ServiceControllerStatus.Running)
+                {
+                    AppendLog("设置 sshd 为自动启动...\n", "Yellow");
+                    RunPowershellCommand("sc.exe config sshd start= auto", "sshd 已设为自动启动");
+                    AppendLog("启动 sshd 服务...\n", "Yellow");
+                    sshd.Start();
+                    sshd.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
+                }
+                AppendLog("sshd 服务运行正常\n", "Green");
+                AppendLog("确保 sshd 启动类型为自动...\n", "Yellow");
+                RunPowershellCommand("sc.exe config sshd start= auto", "sshd 启动类型已确认");
             }
-            AppendLog("sshd 服务运行正常\n", "Green");
-            AppendLog("确保 sshd 启动类型为自动...\n", "Yellow");
-            RunPowershellCommand("sc config sshd start=auto", "sshd 启动类型已确认");
+            catch (InvalidOperationException)
+            {
+                AppendLog("sshd 服务未安装，OpenSSH Server 安装可能失败\n", "Red");
+                AppendLog("→ 请手动以管理员身份运行：Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0\n", "Cyan");
+            }
 
             // 2b. 检查 sshd_config 中 Administrators 组的重定向设置
             AppendLog("\n=== 检查 sshd_config 配置 ===\n", "Cyan");
@@ -430,13 +596,17 @@ public partial class MainWindow : Window
                 }
             }
 
-            // 3. 检查私钥
+            // 3. 检查 / 自动生成密钥
             AppendLog("\n=== 检查密钥文件 ===\n", "Cyan");
             if (!File.Exists(PrivateKeyPath))
             {
-                AppendLog($"错误：私钥文件不存在：{PrivateKeyPath}\n", "Red");
-                AppendLog("请在终端运行生成密钥：ssh-keygen -t ed25519\n", "Yellow");
-                return;
+                AppendLog("未找到私钥，自动生成 ED25519 密钥对...\n", "Yellow");
+                GenerateNewKeys();
+                if (!File.Exists(PrivateKeyPath))
+                {
+                    AppendLog("密钥生成失败，请手动运行：ssh-keygen -t ed25519\n", "Red");
+                    return;
+                }
             }
 
             // 4. 配置 authorized_keys + administrators_authorized_keys
@@ -492,8 +662,8 @@ public partial class MainWindow : Window
 
             // 5. 设置权限
             AppendLog("\n=== 设置文件权限 ===\n", "Cyan");
-            SetAuthorizedKeysPermission();
-            SetAdminAuthorizedKeysPermission();
+            TrySetAuthorizedKeysPermission();
+            TrySetAdminAuthorizedKeysPermission();
 
             // 6. 测试连接
             AppendLog("\n=== 测试本机密钥登录 ===\n", "Cyan");
@@ -510,17 +680,28 @@ public partial class MainWindow : Window
         AppendLog($"正在测试 {Environment.UserName}@127.0.0.1 ...\n", "Yellow");
         try
         {
+            var sshPath = FindSsh();
             var psi = new ProcessStartInfo
             {
-                FileName = "ssh",
+                FileName = sshPath,
                 Arguments = $"-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i \"{PrivateKeyPath}\" {Environment.UserName}@127.0.0.1 exit",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            var process = Process.Start(psi);
-            if (process is null) { AppendLog("无法启动 ssh 进程\n", "Red"); return; }
+            Process? process;
+            try
+            {
+                process = Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"无法启动 ssh（路径: {sshPath}）: {ex.Message}\n", "Red");
+                AppendLog("→ 请确认 OpenSSH Client 已安装\n", "Cyan");
+                return;
+            }
+            if (process is null) { AppendLog("无法启动 ssh 进程，请确认 OpenSSH Client 已安装\n", "Red"); return; }
             process.WaitForExit(10000);
             if (process.ExitCode == 0)
             {
@@ -528,7 +709,11 @@ public partial class MainWindow : Window
             }
             else
             {
-                AppendLog("\n本机密钥登录失败，请检查 sshd_config 设置\n", "Red");
+                var err = process.StandardError.ReadToEnd();
+                AppendLog($"\n本机密钥登录失败（退出码 {process.ExitCode}）\n", "Red");
+                if (!string.IsNullOrWhiteSpace(err))
+                    AppendLog($"  错误详情: {err.Trim()}\n", "Red");
+                AppendLog("→ 请检查 sshd 服务运行状态和 sshd_config 设置\n", "Cyan");
             }
         }
         catch (Exception ex)
@@ -537,24 +722,70 @@ public partial class MainWindow : Window
         }
     }
 
+    // 检查 ssh-keygen 是否真正可运行
+    // 注意：Windows 原生 ssh-keygen 对 -? 返回退出码 1（非 0），Git/MSYS2 版本返回 0
+    private static bool CanRunSshKeygen()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = FindSshKeygen(),
+                Arguments = "-?",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            var p = Process.Start(psi);
+            if (p is null) return false;
+            p.WaitForExit(5000);
+            // 退出码 0 或 1 均表示 ssh-keygen 可运行（打印了帮助信息）
+            // 只有在进程完全无法启动时（如文件不存在）才认为不可用
+            return p.ExitCode == 0 || p.ExitCode == 1;
+        }
+        catch { return false; }
+    }
+
+    private void EnsureOpenSshClient()
+    {
+        if (CanRunSshKeygen())
+        {
+            AppendLog("OpenSSH Client 已可用\n", "Green");
+            return;
+        }
+
+        AppendLog("未检测到 OpenSSH Client，正在安装...\n", "Yellow");
+        RunPowershellCommand(
+            "Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Client*' -and $_.State -ne 'Installed' } | Add-WindowsCapability -Online",
+            "OpenSSH Client 安装完成");
+    }
+
     // ==================== 辅助方法 ====================
-    private void SetAuthorizedKeysPermission()
+    private void TrySetAuthorizedKeysPermission()
     {
         if (!File.Exists(AuthKeysPath)) return;
-        var fileInfo = new FileInfo(AuthKeysPath);
-        var security = fileInfo.GetAccessControl();
+        try
+        {
+            var fileInfo = new FileInfo(AuthKeysPath);
+            var security = fileInfo.GetAccessControl();
 
-        // 禁用继承并移除现有规则
-        security.SetAccessRuleProtection(true, false);
+            // 禁用继承并移除现有规则
+            security.SetAccessRuleProtection(true, false);
 
-        // 仅添加当前用户的读取权限
-        var rule = new FileSystemAccessRule(WindowsIdentity.GetCurrent().Name,
-                                            FileSystemRights.Read,
-                                            AccessControlType.Allow);
-        security.SetAccessRule(rule);
+            // 仅添加当前用户的读取权限
+            var rule = new FileSystemAccessRule(WindowsIdentity.GetCurrent().Name,
+                                                FileSystemRights.Read,
+                                                AccessControlType.Allow);
+            security.SetAccessRule(rule);
 
-        fileInfo.SetAccessControl(security);
-        AppendLog("ACL 权限设置完成\n", "Green");
+            fileInfo.SetAccessControl(security);
+            AppendLog("authorized_keys ACL 权限设置完成\n", "Green");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"authorized_keys ACL 设置失败：{ex.Message}\n", "Yellow");
+        }
     }
 
     private void RunPowershellCommand(string script, string successMsg)
