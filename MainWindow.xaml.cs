@@ -21,6 +21,7 @@ namespace SshHelper;
 
 public partial class MainWindow : Window
 {
+    private enum LogColor { Cyan, Green, Yellow, Red, Default }
     private string PrivateKeyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519");
     private string PubKeyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_ed25519.pub");
     private string AuthKeysPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "authorized_keys");
@@ -31,7 +32,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         TxtUser.Text = Environment.UserName;
-        TxtIp.Text = GetLocalIP();
+        LoadLocalIPs();
     }
 
     // ==================== UI 交互逻辑 ====================
@@ -62,7 +63,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                AppendLog("私钥文件不存在，无法显示。\n", "Red");
+                AppendLog("私钥文件不存在，无法显示。\n", LogColor.Red);
             }
         }
         else
@@ -122,8 +123,10 @@ public partial class MainWindow : Window
     {
         if (sender is TextBlock tb)
         {
-            Clipboard.SetText(tb.Text);
-            AppendLog($"已复制: {tb.Text}\n", "Cyan");
+            if (Win32ClipboardSetText(tb.Text))
+                AppendLog($"已复制: {tb.Text}\n", LogColor.Cyan);
+            else
+                AppendLog("复制失败：剪贴板被其他进程占用\n", LogColor.Red);
         }
     }
 
@@ -132,27 +135,27 @@ public partial class MainWindow : Window
     {
         try
         {
-            AppendLog("=== 0/5 确保 OpenSSH Client 可用 ===\n", "Cyan");
+            AppendLog("=== 0/5 确保 OpenSSH Client 可用 ===\n", LogColor.Cyan);
             EnsureOpenSshClient();
 
-            AppendLog("\n=== 1/5 备份现有密钥 ===\n", "Cyan");
+            AppendLog("\n=== 1/5 备份现有密钥 ===\n", LogColor.Cyan);
             BackupKeys();
 
-            AppendLog("\n=== 2/5 生成新密钥 ===\n", "Cyan");
+            AppendLog("\n=== 2/5 生成新密钥 ===\n", LogColor.Cyan);
             GenerateNewKeys();
 
-            AppendLog("\n=== 3/5 部署新公钥 ===\n", "Cyan");
+            AppendLog("\n=== 3/5 部署新公钥 ===\n", LogColor.Cyan);
             DeployPublicKey();
 
-            AppendLog("\n=== 4/5 验证新密钥 ===\n", "Cyan");
+            AppendLog("\n=== 4/5 验证新密钥 ===\n", LogColor.Cyan);
             TestSshConnection();
 
-            AppendLog("\n=== 5/5 复制新私钥到剪贴板 ===\n", "Cyan");
+            AppendLog("\n=== 5/5 复制新私钥到剪贴板 ===\n", LogColor.Cyan);
             CopyNewPrivateKey();
         }
         catch (Exception ex)
         {
-            AppendLog($"\n更换密钥失败：{ex.Message}\n", "Red");
+            AppendLog($"\n更换密钥失败：{ex.Message}\n", LogColor.Red);
         }
     }
 
@@ -161,7 +164,7 @@ public partial class MainWindow : Window
         var sshDir = Path.GetDirectoryName(PrivateKeyPath);
         if (sshDir is null || !Directory.Exists(sshDir))
         {
-            AppendLog("~/.ssh 目录不存在，跳过备份\n", "Yellow");
+            AppendLog("~/.ssh 目录不存在，跳过备份\n", LogColor.Yellow);
             return;
         }
 
@@ -172,7 +175,7 @@ public partial class MainWindow : Window
         var zipPath = Path.Combine(BakDir, $"{timestamp}.zip");
 
         ZipFile.CreateFromDirectory(sshDir, zipPath);
-        AppendLog($"已备份到: {zipPath}\n", "Green");
+        AppendLog($"已备份到: {zipPath}\n", LogColor.Green);
     }
 
     private void GenerateNewKeys()
@@ -182,24 +185,24 @@ public partial class MainWindow : Window
         if (sshDir is not null && !Directory.Exists(sshDir))
         {
             Directory.CreateDirectory(sshDir);
-            AppendLog($"已创建目录: {sshDir}\n", "Green");
+            AppendLog($"已创建目录: {sshDir}\n", LogColor.Green);
         }
 
         // 清理旧密钥（仅在旧密钥存在时才删除）
         if (File.Exists(PrivateKeyPath))
         {
-            AppendLog($"删除旧私钥: {PrivateKeyPath}\n", "Yellow");
+            AppendLog($"删除旧私钥: {PrivateKeyPath}\n", LogColor.Yellow);
             File.Delete(PrivateKeyPath);
         }
         if (File.Exists(PubKeyPath))
         {
-            AppendLog($"删除旧公钥: {PubKeyPath}\n", "Yellow");
+            AppendLog($"删除旧公钥: {PubKeyPath}\n", LogColor.Yellow);
             File.Delete(PubKeyPath);
         }
 
         // 尝试多个可能的 ssh-keygen 路径
         string sshKeygenPath = FindSshKeygen();
-        AppendLog($"使用 ssh-keygen: {sshKeygenPath}\n", "Cyan");
+        AppendLog($"使用 ssh-keygen: {sshKeygenPath}\n", LogColor.Cyan);
 
         // 为新密钥文件预设正确的 ACL（继承 .ssh 目录的权限）
         var psi = new ProcessStartInfo
@@ -218,41 +221,40 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppendLog($"启动 ssh-keygen 失败（路径: {sshKeygenPath}）: {ex.Message}\n", "Red");
-            AppendLog("→ 请确认 OpenSSH Client 已安装：Get-WindowsCapability -Online | ? Name -like '*OpenSSH.Client*'\n", "Cyan");
+            AppendLog($"启动 ssh-keygen 失败（路径: {sshKeygenPath}）: {ex.Message}\n", LogColor.Red);
+            AppendLog("→ 请确认 OpenSSH Client 已安装：Get-WindowsCapability -Online | ? Name -like '*OpenSSH.Client*'\n", LogColor.Cyan);
             return;
         }
         if (process is null)
         {
-            AppendLog($"无法启动 ssh-keygen（尝试路径: {sshKeygenPath}），请确保已安装 OpenSSH Client\n", "Red");
+            AppendLog($"无法启动 ssh-keygen（尝试路径: {sshKeygenPath}），请确保已安装 OpenSSH Client\n", LogColor.Red);
             return;
         }
+        var err = process.StandardError.ReadToEnd();
+        var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit(30000);
         if (process.ExitCode != 0)
         {
-            var err = process.StandardError.ReadToEnd();
-            var output = process.StandardOutput.ReadToEnd();
-            AppendLog($"密钥生成失败（退出码 {process.ExitCode}）\n", "Red");
+            AppendLog($"密钥生成失败（退出码 {process.ExitCode}）\n", LogColor.Red);
             if (!string.IsNullOrWhiteSpace(err))
-                AppendLog($"  错误输出: {err.Trim()}\n", "Red");
+                AppendLog($"  错误输出: {err.Trim()}\n", LogColor.Red);
             if (!string.IsNullOrWhiteSpace(output))
-                AppendLog($"  标准输出: {output.Trim()}\n", "Yellow");
+                AppendLog($"  标准输出: {output.Trim()}\n", LogColor.Yellow);
             return;
         }
 
         // 验证文件确实生成了（某些情况下 ssh-keygen 退出码 0 但实际未写入）
         if (!File.Exists(PrivateKeyPath) || !File.Exists(PubKeyPath))
         {
-            AppendLog("密钥生成异常：ssh-keygen 正常退出但密钥文件未生成\n", "Red");
-            AppendLog($"  期望私钥: {PrivateKeyPath}\n", "Yellow");
-            AppendLog($"  期望公钥: {PubKeyPath}\n", "Yellow");
+            AppendLog("密钥生成异常：ssh-keygen 正常退出但密钥文件未生成\n", LogColor.Red);
+            AppendLog($"  期望私钥: {PrivateKeyPath}\n", LogColor.Yellow);
+            AppendLog($"  期望公钥: {PubKeyPath}\n", LogColor.Yellow);
             // 检查输出，可能有提示信息
-            var output = process.StandardOutput.ReadToEnd();
             if (!string.IsNullOrWhiteSpace(output))
-                AppendLog($"  ssh-keygen 输出: {output.Trim()}\n", "Yellow");
+                AppendLog($"  ssh-keygen 输出: {output.Trim()}\n", LogColor.Yellow);
             return;
         }
-        AppendLog("新 ED25519 密钥对已生成\n", "Green");
+        AppendLog("新 ED25519 密钥对已生成\n", LogColor.Green);
     }
 
     /// <summary>
@@ -323,7 +325,7 @@ public partial class MainWindow : Window
     {
         if (!File.Exists(PubKeyPath))
         {
-            AppendLog("公钥文件不存在，无法部署\n", "Red");
+            AppendLog("公钥文件不存在，无法部署\n", LogColor.Red);
             return;
         }
 
@@ -336,11 +338,11 @@ public partial class MainWindow : Window
         try
         {
             File.WriteAllText(AuthKeysPath, pubKey + Environment.NewLine);
-            AppendLog("公钥已写入 authorized_keys\n", "Green");
+            AppendLog("公钥已写入 authorized_keys\n", LogColor.Green);
         }
         catch (Exception ex)
         {
-            AppendLog($"写入 authorized_keys 失败：{ex.Message}\n", "Red");
+            AppendLog($"写入 authorized_keys 失败：{ex.Message}\n", LogColor.Red);
         }
 
         // 写入 C:\ProgramData\ssh\administrators_authorized_keys
@@ -350,7 +352,7 @@ public partial class MainWindow : Window
             try { Directory.CreateDirectory(adminSshDir); }
             catch (Exception ex)
             {
-                AppendLog($"无法创建 {adminSshDir}（可能需要管理员权限）：{ex.Message}\n", "Yellow");
+                AppendLog($"无法创建 {adminSshDir}（可能需要管理员权限）：{ex.Message}\n", LogColor.Yellow);
                 // 不阻断流程 — authorized_keys 可能已足够
             }
         }
@@ -358,12 +360,12 @@ public partial class MainWindow : Window
         try
         {
             File.WriteAllText(AuthKeysAdminPath, pubKey + Environment.NewLine);
-            AppendLog("公钥已写入 administrators_authorized_keys\n", "Green");
+            AppendLog("公钥已写入 administrators_authorized_keys\n", LogColor.Green);
         }
         catch (Exception ex)
         {
-            AppendLog($"写入 administrators_authorized_keys 失败（可能需要管理员权限）：{ex.Message}\n", "Yellow");
-            AppendLog("→ 如果你的 sshd_config 未配置 administrators_authorized_keys，可忽略此项\n", "Cyan");
+            AppendLog($"写入 administrators_authorized_keys 失败（可能需要管理员权限）：{ex.Message}\n", LogColor.Yellow);
+            AppendLog("→ 如果你的 sshd_config 未配置 administrators_authorized_keys，可忽略此项\n", LogColor.Cyan);
         }
 
         // 设置权限
@@ -387,7 +389,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppendLog($"ACL 写权限设置失败（{path}）：{ex.Message}\n", "Yellow");
+            AppendLog($"ACL 写权限设置失败（{path}）：{ex.Message}\n", LogColor.Yellow);
         }
     }
 
@@ -396,7 +398,7 @@ public partial class MainWindow : Window
     {
         if (!File.Exists(PrivateKeyPath))
         {
-            AppendLog("私钥文件不存在，无法复制\n", "Red");
+            AppendLog("私钥文件不存在，无法复制\n", LogColor.Red);
             return;
         }
 
@@ -405,12 +407,12 @@ public partial class MainWindow : Window
             var text = File.ReadAllText(PrivateKeyPath);
             if (Win32ClipboardSetText(text))
             {
-                AppendLog("新私钥已复制到剪贴板，请妥善保管！\n", "Green");
+                AppendLog("新私钥已复制到剪贴板，请妥善保管！\n", LogColor.Green);
             }
             else
             {
-                AppendLog("复制到剪贴板失败：剪贴板被其他进程占用\n", "Red");
-                AppendLog("新私钥保存在: " + PrivateKeyPath + "\n", "Yellow");
+                AppendLog("复制到剪贴板失败：剪贴板被其他进程占用\n", LogColor.Red);
+                AppendLog("新私钥保存在: " + PrivateKeyPath + "\n", LogColor.Yellow);
             }
         });
     }
@@ -540,11 +542,11 @@ public partial class MainWindow : Window
                 FileSystemRights.Read, AccessControlType.Allow));
 
             fileInfo.SetAccessControl(security);
-            AppendLog("administrators_authorized_keys ACL 权限设置完成\n", "Green");
+            AppendLog("administrators_authorized_keys ACL 权限设置完成\n", LogColor.Green);
         }
         catch (Exception ex)
         {
-            AppendLog($"administrators_authorized_keys ACL 设置失败（可能需要管理员权限）：{ex.Message}\n", "Yellow");
+            AppendLog($"administrators_authorized_keys ACL 设置失败（可能需要管理员权限）：{ex.Message}\n", LogColor.Yellow);
         }
     }
 
@@ -554,35 +556,35 @@ public partial class MainWindow : Window
         try
         {
             // 1. 检查并安装 OpenSSH
-            AppendLog("=== 检查 OpenSSH 组件 ===\n", "Cyan");
+            AppendLog("=== 检查 OpenSSH 组件 ===\n", LogColor.Cyan);
             RunPowershellCommand("Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Client*' -and $_.State -ne 'Installed' } | Add-WindowsCapability -Online", "安装 OpenSSH Client...");
             RunPowershellCommand("Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Server*' -and $_.State -ne 'Installed' } | Add-WindowsCapability -Online", "安装 OpenSSH Server...");
 
             // 2. 检查 sshd 服务
-            AppendLog("\n=== 检查 sshd 服务状态 ===\n", "Cyan");
+            AppendLog("\n=== 检查 sshd 服务状态 ===\n", LogColor.Cyan);
             try
             {
                 var sshd = new ServiceController("sshd");
                 if (sshd.Status != ServiceControllerStatus.Running)
                 {
-                    AppendLog("设置 sshd 为自动启动...\n", "Yellow");
+                    AppendLog("设置 sshd 为自动启动...\n", LogColor.Yellow);
                     RunPowershellCommand("sc.exe config sshd start= auto", "sshd 已设为自动启动");
-                    AppendLog("启动 sshd 服务...\n", "Yellow");
+                    AppendLog("启动 sshd 服务...\n", LogColor.Yellow);
                     sshd.Start();
                     sshd.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
                 }
-                AppendLog("sshd 服务运行正常\n", "Green");
-                AppendLog("确保 sshd 启动类型为自动...\n", "Yellow");
+                AppendLog("sshd 服务运行正常\n", LogColor.Green);
+                AppendLog("确保 sshd 启动类型为自动...\n", LogColor.Yellow);
                 RunPowershellCommand("sc.exe config sshd start= auto", "sshd 启动类型已确认");
             }
             catch (InvalidOperationException)
             {
-                AppendLog("sshd 服务未安装，OpenSSH Server 安装可能失败\n", "Red");
-                AppendLog("→ 请手动以管理员身份运行：Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0\n", "Cyan");
+                AppendLog("sshd 服务未安装，OpenSSH Server 安装可能失败\n", LogColor.Red);
+                AppendLog("→ 请手动以管理员身份运行：Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0\n", LogColor.Cyan);
             }
 
             // 2b. 检查 sshd_config 中 Administrators 组的重定向设置
-            AppendLog("\n=== 检查 sshd_config 配置 ===\n", "Cyan");
+            AppendLog("\n=== 检查 sshd_config 配置 ===\n", LogColor.Cyan);
             var sshdConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "OpenSSH", "sshd_config");
             if (!File.Exists(sshdConfigPath))
                 sshdConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ssh", "sshd_config");
@@ -591,26 +593,26 @@ public partial class MainWindow : Window
                 var config = File.ReadAllText(sshdConfigPath);
                 if (config.Contains("Match Group Administrators") || config.Contains("administrators_authorized_keys"))
                 {
-                    AppendLog("检测到 sshd_config 为 Administrators 组配置了专用授权文件\n", "Yellow");
-                    AppendLog("→ 程序将同步写公钥到 administrators_authorized_keys\n", "Cyan");
+                    AppendLog("检测到 sshd_config 为 Administrators 组配置了专用授权文件\n", LogColor.Yellow);
+                    AppendLog("→ 程序将同步写公钥到 administrators_authorized_keys\n", LogColor.Cyan);
                 }
             }
 
             // 3. 检查 / 自动生成密钥
-            AppendLog("\n=== 检查密钥文件 ===\n", "Cyan");
+            AppendLog("\n=== 检查密钥文件 ===\n", LogColor.Cyan);
             if (!File.Exists(PrivateKeyPath))
             {
-                AppendLog("未找到私钥，自动生成 ED25519 密钥对...\n", "Yellow");
+                AppendLog("未找到私钥，自动生成 ED25519 密钥对...\n", LogColor.Yellow);
                 GenerateNewKeys();
                 if (!File.Exists(PrivateKeyPath))
                 {
-                    AppendLog("密钥生成失败，请手动运行：ssh-keygen -t ed25519\n", "Red");
+                    AppendLog("密钥生成失败，请手动运行：ssh-keygen -t ed25519\n", LogColor.Red);
                     return;
                 }
             }
 
             // 4. 配置 authorized_keys + administrators_authorized_keys
-            AppendLog("\n=== 配置公钥授权 ===\n", "Cyan");
+            AppendLog("\n=== 配置公钥授权 ===\n", LogColor.Cyan);
             if (File.Exists(PubKeyPath))
             {
                 string pubKey = File.ReadAllText(PubKeyPath).Trim();
@@ -628,11 +630,11 @@ public partial class MainWindow : Window
                 if (!keyExists)
                 {
                     File.AppendAllText(AuthKeysPath, pubKey + Environment.NewLine);
-                    AppendLog("公钥已添加到 authorized_keys\n", "Green");
+                    AppendLog("公钥已添加到 authorized_keys\n", LogColor.Green);
                 }
                 else
                 {
-                    AppendLog("公钥已存在 authorized_keys，跳过\n", "Yellow");
+                    AppendLog("公钥已存在 authorized_keys，跳过\n", LogColor.Yellow);
                 }
 
                 // 4b. C:\ProgramData\ssh\administrators_authorized_keys
@@ -648,36 +650,36 @@ public partial class MainWindow : Window
                 if (!adminKeyExists)
                 {
                     File.WriteAllText(AuthKeysAdminPath, pubKey + Environment.NewLine);
-                    AppendLog("公钥已写入 administrators_authorized_keys\n", "Green");
+                    AppendLog("公钥已写入 administrators_authorized_keys\n", LogColor.Green);
                 }
                 else
                 {
-                    AppendLog("公钥已存在 administrators_authorized_keys，跳过\n", "Yellow");
+                    AppendLog("公钥已存在 administrators_authorized_keys，跳过\n", LogColor.Yellow);
                 }
             }
             else
             {
-                AppendLog("警告：找不到公钥文件，跳过授权配置\n", "Yellow");
+                AppendLog("警告：找不到公钥文件，跳过授权配置\n", LogColor.Yellow);
             }
 
             // 5. 设置权限
-            AppendLog("\n=== 设置文件权限 ===\n", "Cyan");
+            AppendLog("\n=== 设置文件权限 ===\n", LogColor.Cyan);
             TrySetAuthorizedKeysPermission();
             TrySetAdminAuthorizedKeysPermission();
 
             // 6. 测试连接
-            AppendLog("\n=== 测试本机密钥登录 ===\n", "Cyan");
+            AppendLog("\n=== 测试本机密钥登录 ===\n", LogColor.Cyan);
             TestSshConnection();
         }
         catch (Exception ex)
         {
-            AppendLog($"\n执行出错：{ex.Message}\n", "Red");
+            AppendLog($"\n执行出错：{ex.Message}\n", LogColor.Red);
         }
     }
 
     private void TestSshConnection()
     {
-        AppendLog($"正在测试 {Environment.UserName}@127.0.0.1 ...\n", "Yellow");
+        AppendLog($"正在测试 {Environment.UserName}@127.0.0.1 ...\n", LogColor.Yellow);
         try
         {
             var sshPath = FindSsh();
@@ -697,28 +699,28 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                AppendLog($"无法启动 ssh（路径: {sshPath}）: {ex.Message}\n", "Red");
-                AppendLog("→ 请确认 OpenSSH Client 已安装\n", "Cyan");
+                AppendLog($"无法启动 ssh（路径: {sshPath}）: {ex.Message}\n", LogColor.Red);
+                AppendLog("→ 请确认 OpenSSH Client 已安装\n", LogColor.Cyan);
                 return;
             }
-            if (process is null) { AppendLog("无法启动 ssh 进程，请确认 OpenSSH Client 已安装\n", "Red"); return; }
+            if (process is null) { AppendLog("无法启动 ssh 进程，请确认 OpenSSH Client 已安装\n", LogColor.Red); return; }
+            var err = process.StandardError.ReadToEnd();
             process.WaitForExit(10000);
             if (process.ExitCode == 0)
             {
-                AppendLog("\n本机密钥登录成功！配置正确！\n", "Green");
+                AppendLog("\n本机密钥登录成功！配置正确！\n", LogColor.Green);
             }
             else
             {
-                var err = process.StandardError.ReadToEnd();
-                AppendLog($"\n本机密钥登录失败（退出码 {process.ExitCode}）\n", "Red");
+                AppendLog($"\n本机密钥登录失败（退出码 {process.ExitCode}）\n", LogColor.Red);
                 if (!string.IsNullOrWhiteSpace(err))
-                    AppendLog($"  错误详情: {err.Trim()}\n", "Red");
-                AppendLog("→ 请检查 sshd 服务运行状态和 sshd_config 设置\n", "Cyan");
+                    AppendLog($"  错误详情: {err.Trim()}\n", LogColor.Red);
+                AppendLog("→ 请检查 sshd 服务运行状态和 sshd_config 设置\n", LogColor.Cyan);
             }
         }
         catch (Exception ex)
         {
-            AppendLog($"\n测试失败：{ex.Message}\n", "Red");
+            AppendLog($"\n测试失败：{ex.Message}\n", LogColor.Red);
         }
     }
 
@@ -751,11 +753,11 @@ public partial class MainWindow : Window
     {
         if (CanRunSshKeygen())
         {
-            AppendLog("OpenSSH Client 已可用\n", "Green");
+            AppendLog("OpenSSH Client 已可用\n", LogColor.Green);
             return;
         }
 
-        AppendLog("未检测到 OpenSSH Client，正在安装...\n", "Yellow");
+        AppendLog("未检测到 OpenSSH Client，正在安装...\n", LogColor.Yellow);
         RunPowershellCommand(
             "Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Client*' -and $_.State -ne 'Installed' } | Add-WindowsCapability -Online",
             "OpenSSH Client 安装完成");
@@ -780,11 +782,11 @@ public partial class MainWindow : Window
             security.SetAccessRule(rule);
 
             fileInfo.SetAccessControl(security);
-            AppendLog("authorized_keys ACL 权限设置完成\n", "Green");
+            AppendLog("authorized_keys ACL 权限设置完成\n", LogColor.Green);
         }
         catch (Exception ex)
         {
-            AppendLog($"authorized_keys ACL 设置失败：{ex.Message}\n", "Yellow");
+            AppendLog($"authorized_keys ACL 设置失败：{ex.Message}\n", LogColor.Yellow);
         }
     }
 
@@ -800,46 +802,72 @@ public partial class MainWindow : Window
             CreateNoWindow = true
         };
         var process = Process.Start(psi);
-        if (process is null) { AppendLog("无法启动 PowerShell 进程\n", "Red"); return; }
+        if (process is null) { AppendLog("无法启动 PowerShell 进程\n", LogColor.Red); return; }
         process.WaitForExit();
         if (process.ExitCode == 0)
         {
-            if (!string.IsNullOrEmpty(successMsg)) AppendLog(successMsg + " [完成]\n", "Green");
+            if (!string.IsNullOrEmpty(successMsg)) AppendLog(successMsg + " [完成]\n", LogColor.Green);
         }
         else
         {
-            AppendLog("执行失败: " + process.StandardError.ReadToEnd() + "\n", "Red");
+            AppendLog("执行失败: " + process.StandardError.ReadToEnd() + "\n", LogColor.Red);
         }
     }
 
-    private string GetLocalIP()
+    private List<IPAddress> GetAllLocalIPs()
     {
         try
         {
             var entry = Dns.GetHostEntry(Dns.GetHostName());
-            var ip = entry.AddressList.FirstOrDefault(ip => ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip));
-            return ip?.ToString() ?? "未获取到IP";
+            return entry.AddressList.Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip)).ToList();
         }
         catch
         {
-            return "未获取到IP (请ipconfig查看)";
+            return [];
+        }
+    }
+
+    private void LoadLocalIPs()
+    {
+        var ips = GetAllLocalIPs();
+        IpSelector.Items.Clear();
+        foreach (var ip in ips)
+            IpSelector.Items.Add(ip.ToString());
+        if (IpSelector.Items.Count > 0)
+            IpSelector.SelectedIndex = 0;
+    }
+
+    private void IpSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IpSelector.SelectedItem is string ip)
+            AppendLog($"已选择局域网地址: {ip}\n", LogColor.Cyan);
+    }
+
+    private void CopySelectedIp(object sender, MouseButtonEventArgs e)
+    {
+        if (IpSelector.SelectedItem is string ip)
+        {
+            if (Win32ClipboardSetText(ip))
+                AppendLog($"已复制 IP: {ip}\n", LogColor.Cyan);
+            else
+                AppendLog("复制失败：剪贴板被其他进程占用\n", LogColor.Red);
         }
     }
 
     // 线程安全的彩色日志追加
-    private void AppendLog(string text, string color)
+    private void AppendLog(string text, LogColor color)
     {
         Dispatcher.Invoke(() =>
         {
             var run = new Run(text);
-            switch (color)
+            run.Foreground = color switch
             {
-                case "Green": run.Foreground = System.Windows.Media.Brushes.LightGreen; break;
-                case "Yellow": run.Foreground = System.Windows.Media.Brushes.Yellow; break;
-                case "Red": run.Foreground = System.Windows.Media.Brushes.LightPink; break;
-                case "Cyan": run.Foreground = System.Windows.Media.Brushes.Cyan; break;
-                default: run.Foreground = System.Windows.Media.Brushes.White; break;
-            }
+                LogColor.Green => System.Windows.Media.Brushes.LightGreen,
+                LogColor.Yellow => System.Windows.Media.Brushes.Yellow,
+                LogColor.Red => System.Windows.Media.Brushes.LightPink,
+                LogColor.Cyan => System.Windows.Media.Brushes.Cyan,
+                _ => System.Windows.Media.Brushes.White,
+            };
             var paragraph = new Paragraph(run) { Margin = new Thickness(0) };
             LogConsole.Document.Blocks.Add(paragraph);
             LogConsole.ScrollToEnd();

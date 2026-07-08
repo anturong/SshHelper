@@ -47,7 +47,14 @@
                     <TextBlock Text="📡 连接信息" Foreground="#8b949e" FontWeight="Bold" FontSize="12" Margin="0,0,0,15"/>
                     <Grid Margin="0,0,0,8">
                         <TextBlock Text="局域网地址" Foreground="#8b949e"/>
-                        <TextBlock x:Name="TxtIp" HorizontalAlignment="Right" Foreground="#58a6ff" Cursor="Hand" MouseDown="CopyText"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <ComboBox x:Name="IpSelector" MinWidth="130"
+                                      Foreground="#58a6ff" Background="#0d1117" BorderBrush="#30363d"
+                                      BorderThickness="1" Padding="4,2"
+                                      SelectionChanged="IpSelector_SelectionChanged"/>
+                            <TextBlock Text=" 复制" Foreground="#8b949e" Cursor="Hand"
+                                       MouseDown="CopySelectedIp" FontSize="11" Margin="5,0,0,0"/>
+                        </StackPanel>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <TextBlock Text="端口" Foreground="#8b949e"/>

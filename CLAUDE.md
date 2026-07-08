@@ -36,11 +36,11 @@ Plain WPF code-behind, no MVVM, no DI.
 
 **Clipboard** (key pain point): All clipboard operations use raw Win32 `user32.dll` P/Invoke (`OpenClipboard`/`SetClipboardData`/`EmptyClipboard`/`CloseClipboard`) instead of WPF's `Clipboard.SetText`, because elevated (admin) processes hit `CLIPBRD_E_CANT_OPEN` with the WPF API. Includes 10-retry with 200ms delay. Two formats: `CF_UNICODETEXT` (13) for text and `CF_HDROP` (0xF) with `DROPFILES` struct for file drops.
 
-**Permissions**: File ACLs set via `System.Security.AccessControl` with inheritance disabled. `GrantWriteAccess()` helper temporarily adds Write permission before overwriting files that were previously locked down to Read-only.
+**Permissions**: File ACLs set via `System.Security.AccessControl` with inheritance disabled. `TryGrantWriteAccess()` temporarily adds Write permission before overwriting files that were previously locked down to Read-only. All ACL operations are wrapped in try/catch for graceful degradation.
 
 **External processes**: `Process.Start()` used for `ssh-keygen`, `ssh`, and `powershell`. PowerShell scripts use `-NoProfile` for clean execution.
 
-**sshd auto-start**: The app runs `sc config sshd start=auto` via PowerShell to ensure sshd starts on boot. This is done both before starting the service and as a safety check when the service is already running.
+**sshd auto-start**: The app runs `sc.exe config sshd start= auto` via PowerShell to ensure sshd starts on boot (Windows `sc` requires a space after `=`). This is done both before starting the service and as a safety check when the service is already running.
 
 ## Right Panel Buttons
 
@@ -54,7 +54,7 @@ Plain WPF code-behind, no MVVM, no DI.
 ## Key Behaviors
 
 - **Administrators group quirk**: Windows OpenSSH `sshd_config` redirects admin users to `C:\ProgramData\ssh\administrators_authorized_keys` instead of `~/.ssh/authorized_keys`. App writes to **both** and detects this in `sshd_config` at runtime. Admin file ACL: no inheritance, only `SYSTEM` + `BUILTIN\Administrators` Read.
-- **Key rotation flow**: `BackupKeys()` → `GenerateNewKeys()` → `DeployPublicKey()` → `TestSshConnection()` → `CopyNewPrivateKey()`. Backup creates `{exe_dir}/bak/yyyyMMdd_HHmmss.zip` of the entire `~/.ssh/` directory. `DeployPublicKey` uses `GrantWriteAccess` before writing to bypass prior Read-only ACL. Test runs `ssh -o BatchMode=yes user@127.0.0.1 exit`.
+- **Key rotation flow**: `BackupKeys()` → `GenerateNewKeys()` → `DeployPublicKey()` → `TestSshConnection()` → `CopyNewPrivateKey()`. Backup creates `{exe_dir}/bak/yyyyMMdd_HHmmss.zip` of the entire `~/.ssh/` directory. `DeployPublicKey` uses `TryGrantWriteAccess` before writing to bypass prior Read-only ACL. Test runs `FindSsh()` + `ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i {key} user@127.0.0.1 exit`.
 - **sshd_config detection**: Reads `%ProgramFiles%/OpenSSH/sshd_config` or `%ProgramData%/ssh/sshd_config`, logs a warning if `administrators_authorized_keys` redirection is configured.
 
 ## Dependencies
