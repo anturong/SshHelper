@@ -62,7 +62,9 @@
                     </Grid>
                     <Grid>
                         <TextBlock Text="用户名" Foreground="#8b949e"/>
-                        <TextBlock x:Name="TxtUser" HorizontalAlignment="Right" Foreground="#58a6ff" Cursor="Hand" MouseDown="CopyText"/>
+                        <TextBox x:Name="TxtUser" HorizontalAlignment="Right" MinWidth="100"
+                                 Foreground="#58a6ff" Background="#0d1117" BorderBrush="#30363d"
+                                 BorderThickness="1" Padding="4,2" FontSize="12" TextAlignment="Right"/>
                     </Grid>
                 </StackPanel>
             </Border>

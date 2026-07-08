@@ -35,6 +35,8 @@ public partial class MainWindow : Window
         LoadLocalIPs();
     }
 
+    private string SshUser => TxtUser.Text.Trim();
+
     // ==================== UI 交互逻辑 ====================
     private async void BtnStart_Click(object sender, RoutedEventArgs e)
     {
@@ -679,14 +681,14 @@ public partial class MainWindow : Window
 
     private void TestSshConnection()
     {
-        AppendLog($"正在测试 {Environment.UserName}@127.0.0.1 ...\n", LogColor.Yellow);
+        AppendLog($"正在测试 {SshUser}@127.0.0.1 ...\n", LogColor.Yellow);
         try
         {
             var sshPath = FindSsh();
             var psi = new ProcessStartInfo
             {
                 FileName = sshPath,
-                Arguments = $"-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i \"{PrivateKeyPath}\" {Environment.UserName}@127.0.0.1 exit",
+                Arguments = $"-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i \"{PrivateKeyPath}\" {SshUser}@127.0.0.1 exit",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
