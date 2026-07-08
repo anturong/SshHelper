@@ -35,14 +35,13 @@ public partial class MainWindow : Window
         LoadLocalIPs();
     }
 
-    private string SshUser => TxtUser.Text.Trim();
-
     // ==================== UI 交互逻辑 ====================
     private async void BtnStart_Click(object sender, RoutedEventArgs e)
     {
         BtnStart.IsEnabled = false;
         LogConsole.Document.Blocks.Clear();
-        await Task.Run(() => RunFullConfiguration());
+        var sshUser = TxtUser.Text.Trim();
+        await Task.Run(() => RunFullConfiguration(sshUser));
         BtnStart.IsEnabled = true;
     }
 
@@ -50,7 +49,8 @@ public partial class MainWindow : Window
     {
         BtnTest.IsEnabled = false;
         LogConsole.Document.Blocks.Clear();
-        await Task.Run(() => TestSshConnection());
+        var sshUser = TxtUser.Text.Trim();
+        await Task.Run(() => TestSshConnection(sshUser));
         BtnTest.IsEnabled = true;
     }
 
@@ -117,7 +117,8 @@ public partial class MainWindow : Window
 
         BtnStart.IsEnabled = false;
         LogConsole.Document.Blocks.Clear();
-        await Task.Run(() => RunReplaceKey());
+        var sshUser = TxtUser.Text.Trim();
+        await Task.Run(() => RunReplaceKey(sshUser));
         BtnStart.IsEnabled = true;
     }
 
@@ -133,7 +134,7 @@ public partial class MainWindow : Window
     }
 
     // ==================== 更换密钥逻辑 ====================
-    private void RunReplaceKey()
+    private void RunReplaceKey(string sshUser)
     {
         try
         {
@@ -150,7 +151,7 @@ public partial class MainWindow : Window
             DeployPublicKey();
 
             AppendLog("\n=== 4/5 验证新密钥 ===\n", LogColor.Cyan);
-            TestSshConnection();
+            TestSshConnection(sshUser);
 
             AppendLog("\n=== 5/5 复制新私钥到剪贴板 ===\n", LogColor.Cyan);
             CopyNewPrivateKey();
@@ -553,7 +554,7 @@ public partial class MainWindow : Window
     }
 
     // ==================== 核心配置逻辑 ====================
-    private void RunFullConfiguration()
+    private void RunFullConfiguration(string sshUser)
     {
         try
         {
@@ -671,7 +672,7 @@ public partial class MainWindow : Window
 
             // 6. 测试连接
             AppendLog("\n=== 测试本机密钥登录 ===\n", LogColor.Cyan);
-            TestSshConnection();
+            TestSshConnection(sshUser);
         }
         catch (Exception ex)
         {
@@ -679,16 +680,16 @@ public partial class MainWindow : Window
         }
     }
 
-    private void TestSshConnection()
+    private void TestSshConnection(string sshUser)
     {
-        AppendLog($"正在测试 {SshUser}@127.0.0.1 ...\n", LogColor.Yellow);
+        AppendLog($"正在测试 {sshUser}@127.0.0.1 ...\n", LogColor.Yellow);
         try
         {
             var sshPath = FindSsh();
             var psi = new ProcessStartInfo
             {
                 FileName = sshPath,
-                Arguments = $"-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i \"{PrivateKeyPath}\" {SshUser}@127.0.0.1 exit",
+                Arguments = $"-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes -i \"{PrivateKeyPath}\" {sshUser}@127.0.0.1 exit",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
