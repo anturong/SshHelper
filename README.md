@@ -2,6 +2,8 @@
 
 Windows SSH 服务管理工具 — WPF 图形界面，用于管理 OpenSSH 服务、生成和部署 SSH 密钥。
 
+![SshHelper 主界面](docs/ui.png)
+
 ## 功能
 
 ### 一键配置 (v1.01+)
