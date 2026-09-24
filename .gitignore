@@ -24,3 +24,6 @@ bak/
 ## Claude
 .claude/
 publish.zip
+
+## Publish output (untracked build dir)
+SshHelper/

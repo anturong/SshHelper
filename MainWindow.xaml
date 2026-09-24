@@ -63,9 +63,10 @@
                     <Grid>
                         <TextBlock Text="用户名" Foreground="#8b949e"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <TextBlock x:Name="TxtUser" Foreground="#58a6ff"/>
-                            <TextBlock Text=" ?" Foreground="#8b949e" FontSize="11" Cursor="Help"
-                                       ToolTip="如需更改SSH登录用户名：Win+R → netplwiz → 选中当前用户 → 属性 → 改用户名 → 重启"/>
+                            <TextBlock x:Name="TxtUser" Foreground="#58a6ff" Cursor="Hand"
+                                       MouseDown="ShowUserHelp"/>
+                            <TextBlock Text=" ℹ" Foreground="#8b949e" FontSize="13" Cursor="Hand"
+                                       MouseDown="ShowUserHelp"/>
                         </StackPanel>
                     </Grid>
                 </StackPanel>

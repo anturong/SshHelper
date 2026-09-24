@@ -120,6 +120,17 @@ public partial class MainWindow : Window
         BtnStart.IsEnabled = true;
     }
 
+    private void ShowUserHelp(object sender, MouseButtonEventArgs e)
+    {
+        MessageBox.Show(
+            "SSH 登录用户名 = Windows 系统用户名\n\n" +
+            "如需更改 SSH 登录用户名：\n" +
+            "  Win+R → netplwiz → 回车\n" +
+            "  选中当前用户 → 属性 → 改用户名 → 重启\n\n" +
+            "当前用户名: " + Environment.UserName,
+            "关于用户名", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
     private void CopyText(object sender, MouseButtonEventArgs e)
     {
         if (sender is TextBlock tb)
