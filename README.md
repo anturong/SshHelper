@@ -39,6 +39,40 @@ Windows SSH 服务管理工具 — WPF 图形界面，用于管理 OpenSSH 服�
 - **.NET 8.0** 运行时（self-contained 发布版本无需安装）。
 - OpenSSH Client/Server 可由程序自动安装，无需提前准备。
 
+## 故障排查
+
+### 测试本机密钥登录报「退出码 255 / Connection refused」
+
+症状：
+
+```
+本机密钥登录失败（退出码 255）
+错误详情: banner exchange: Connection to UNKNOWN port -1: Connection refused
+→ 请检查 sshd 服务运行状态和 sshd_config 设置
+```
+
+**这不是密钥或 `sshd_config` 的问题，而是目标机压根没有安装 OpenSSH Server**（`sshd` 服务不存在），
+所以 `127.0.0.1:22` 直接就 `Connection refused`。
+
+本程序「一键配置」里的 OpenSSH Server 安装走的是 Windows 按需功能：
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+```
+
+这一步**依赖 Windows 更新 / FoD 源**，在**离线机器**或**精简、克隆出来的镜像（sysprep 模板、PE、LTSC 精简版）**上会失败，
+sshd 从未注册，于是测试连接必然 `Connection refused`。
+
+**解决：改用便携版 Win32-OpenSSH（不依赖 Windows 更新）：**
+
+1. 下载 `OpenSSH-Win64-v*.msi`（[PowerShell/Win32-OpenSSH releases](https://github.com/PowerShell/Win32-OpenSSH/releases)）
+2. 安装：`msiexec /i OpenSSH-Win64-*.msi /qn`
+3. 设为自启并启动：`sc config sshd start= auto` 然后 `net start sshd`
+
+装完再回本程序点「一键配置并启动」，即可正常测试并部署密钥。
+
+> 速查：SSH 连不上，先确认服务在不在 —— `sc query sshd`。服务都没有，就别再查密钥了。
+
 ## 免责声明
 
 > 本软件按「原样」提供，不提供任何明示或暗示的保证，包括但不限于适销性、特定用途适用性和非侵权性的保证。在任何情况下，作者均不对因使用本软件而产生的任何索赔、损害或其他责任负责。
